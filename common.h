@@ -12,7 +12,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define WIFI_ARDRONE_IP	"192.168.1.1"
+#define WIFI_ARDRONE_IP	"127.0.0.1"
 
 //init dans drone commande
 struct sockaddr_in addr_drone, addr_client;

@@ -16,8 +16,8 @@ Now that we use a frame parser before decoding, we don't need to pad it.*/
 #endif
 
 //Dimensions of the video stream
-#define JAKO_VIDEO_WIDTH	640
-#define JAKO_VIDEO_HEIGHT	360
+#define JAKO_VIDEO_WIDTH	1280
+#define JAKO_VIDEO_HEIGHT	720
 
 /*Load up the h264 codec needed for video decoding.
 Perform the initialization steps required by FFmpeg.*/
