@@ -1,6 +1,7 @@
 #ifndef JAKOPTER_VIDEO_H
 #define JAKOPTER_VIDEO_H
 
+
 #include "common.h"
 
 #define VIDEO_TIMEOUT 4
@@ -79,6 +80,10 @@ int jakopter_init_video();
 Fermer la connexion au port et arrêter le thread.
 */
 int jakopter_stop_video();
+/*
+Ask the video thread to stop, but don't wait for it. Shouldn't be called by the user.
+*/
+int video_set_stopped();
 
 #endif
 

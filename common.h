@@ -12,6 +12,9 @@
 #include <time.h>
 #include <unistd.h>
 
+#define float32_t float
+#define float64_t double
+
 #define WIFI_ARDRONE_IP	"127.0.0.1"
 
 //init dans drone commande
