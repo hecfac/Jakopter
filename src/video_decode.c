@@ -112,10 +112,11 @@ int video_decode_packet(uint8_t* buffer, int buf_size, jakopter_video_frame_t* r
 				nb_frames++;
 				//check if the video size has changed
 				if(current_frame->width != current_width || current_frame->height != current_height)
-					if(video_alloc_frame_buffer() < 0) {
-						fprintf(stderr, "Error : couldn't allocate memory for decoding.\n");
-						return -1;
-					}
+					&& video_alloc_frame_buffer() < 0) {
+					fprintf(stderr, "Error : couldn't allocate memory for decoding.\n");
+					return -1;
+				}
+				
 				//write the raw frame data in our temporary buffer
 				int picsize = avpicture_layout((const AVPicture*)current_frame, current_frame->format, 
 				current_frame->width, current_frame->height, tempBuffer, tempBufferSize);

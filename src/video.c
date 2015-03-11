@@ -9,7 +9,7 @@ struct sockaddr_in addr_drone_video, addr_client_video;
 int sock_video;
 
 //video packet reception, and video processing routines
-pthread_t video_thread, processing_thread;
+static pthread_t video_thread, processing_thread;
 //FD set used for the video socket
 fd_set vid_fd_set;
 struct timeval video_timeout = {VIDEO_TIMEOUT, 0};
@@ -43,7 +43,7 @@ static pthread_mutex_t mutex_terminated = PTHREAD_MUTEX_INITIALIZER;
 
 //clean things that have been initiated/created by init_video and need manual cleaning.
 static void video_clean();
-int video_join_thread();
+static int video_join_thread();
 
 
 void* video_routine(void* args)
@@ -57,50 +57,50 @@ void* video_routine(void* args)
 	//structure that will hold our latest decoded video frame
 	jakopter_video_frame_t decoded_frame;
 	
-	pthread_mutex_lock(&mutex_stopped);
 	while(!stopped) {
-		pthread_mutex_unlock(&mutex_stopped);
-		//Wait for the drone to send data on the video socket
-		if (select(sock_video+1, &vid_fd_set, NULL, NULL, &video_timeout) < 0) {
-			perror("Error select()");
-			video_set_stopped();
-		}
-		else if(FD_ISSET(sock_video, &vid_fd_set)) {
-			/*receive the video data from the drone. Only BASE_SIZE, since
-			TCP_SIZE may be larger on purpose.*/
-			pack_size = recv(sock_video, tcp_buf, BASE_VIDEO_BUF_SIZE, 0);
-			if(pack_size == 0) {
-				printf("Stream ended by server. Ending the video thread.\n");
-				video_set_stopped();
-			}
-			else if(pack_size < 0)
-				perror("Error recv()");
-			else {
-				//we actually got some data, send it for decoding !
-				got_frame = video_decode_packet(tcp_buf, pack_size, &decoded_frame);
-				if(got_frame < 0) {
-					fprintf(stderr, "Error decoding video !\n");
-					video_set_stopped();
-				}
-				//if we have a complete decoded frame, push it onto the queue for decoding
-				else if(got_frame == 1)
-					video_queue_push_frame(&decoded_frame);
-			}
-		}
-		else {
-			printf("Video : data reception has timed out. Ending the video thread now.\n");
-			video_set_stopped();
-		}
+		
 		//reset the timeout and the FDSET entry
 		video_timeout.tv_sec = VIDEO_TIMEOUT;
 		FD_ZERO(&vid_fd_set);
 		FD_SET(sock_video, &vid_fd_set);
-
-		pthread_mutex_lock(&mutex_stopped);
+		
+		//Wait for the drone to send data on the video socket
+		if (select(sock_video+1, &vid_fd_set, NULL, NULL, &video_timeout) < 0) {
+			perror("Error select()");
+			video_set_stopped();
+			continue;
+		}
+		if (!FD_ISSET(sock_video, &vid_fd_set)) {
+			printf("Video : data reception has timed out. Ending the video thread now.\n");
+			video_set_stopped();
+			continue;
+		}
+		
+		/*receive the video data from the drone. Only BASE_SIZE, since
+		TCP_SIZE may be larger on purpose.*/
+		pack_size = recv(sock_video, tcp_buf, BASE_VIDEO_BUF_SIZE, 0);
+		if (pack_size == 0) {
+			printf("Stream ended by server. Ending the video thread.\n");
+			video_set_stopped();
+		}
+		else if (pack_size < 0) {
+			perror("Error recv()");
+			video_set_stopped();
+		}
+		else {
+			//we actually got some data, send it for decoding !
+			got_frame = video_decode_packet(tcp_buf, pack_size, &decoded_frame);
+			if (got_frame < 0) {
+				fprintf(stderr, "Error decoding video !\n");
+				video_set_stopped();
+			}
+			//if we have a complete decoded frame, push it onto the queue for decoding
+			else if (got_frame == 1)
+				video_queue_push_frame(&decoded_frame);
+		}
 	}
-	pthread_mutex_unlock(&mutex_stopped);
-	/*push an empty frame on the queue so the processing
-	thread knows it has to stop*/
+
+	//push an empty frame on the queue so the processing thread knows it has to stop
 	video_queue_push_frame(&VIDEO_QUEUE_END);
 	pthread_join(processing_thread, NULL);
 	//there's no reason to keep stuff that's needed for our video thread once it's ended, so clean it now.
@@ -112,26 +112,33 @@ void* processing_routine(void* args)
 {
 	//decoded video frame that will be pulled from the queue
 	jakopter_video_frame_t frame;
+	
+	bool processing_stopped = false;
 	//wait for frames to be decoded, and then process them.
-	pthread_mutex_lock(&mutex_stopped);
-	while(!stopped) {
-		pthread_mutex_unlock(&mutex_stopped);
-		if(video_queue_pull_frame(&frame) < 0) {
+	while (!processing_stopped) {
+
+		//wait for a decoded video frame to be pushed on the queue.
+		if (video_queue_pull_frame(&frame) < 0) {
 			fprintf(stderr, "[Video Processing] Error retrieving frame !\n");
+			processing_stopped = true;
 			video_set_stopped();
 		}
-		//a 0-sized frame means we're about to quit.
-		else if(frame.size != 0)
-			if(frame_processing_callback(frame.pixels, frame.w, frame.h, frame.size) < 0) {
-				fprintf(stderr, "[Video Processing] Error processing frame !\n");
-				video_set_stopped();
-			}
-		pthread_mutex_lock(&mutex_stopped);
+		//we got a decoded frame; if it has a non-null size, it means we can process it.
+		else if (frame.size != 0
+				 && frame_processing_callback(frame.pixels, frame.w, frame.h, frame.size) < 0) {
+			fprintf(stderr, "[Video Processing] Error processing frame !\n");
+			processing_stopped = true;
+			video_set_stopped();
+		}
+		//a frame of size 0 is a signal that we need to quit.
+		else
+			processing_stopped = true;
 	}
-	pthread_mutex_unlock(&mutex_stopped);
+
 	//free the resources of the processing module
 	if(frame_processing_clean != NULL)
 		frame_processing_clean();
+	
 	pthread_exit(NULL);
 }
 
@@ -212,8 +219,9 @@ int jakopter_init_video()
 
 void video_clean()
 {
-	if(close(sock_video) < 0)
+	if (close(sock_video) < 0)
 		perror("Error stopping video connection");
+	
 	video_stop_decoder();
 	video_queue_free();
 }
@@ -224,7 +232,7 @@ Useful for stopping it from the inside.
 int video_set_stopped()
 {
 	pthread_mutex_lock(&mutex_stopped);
-	if(!stopped) {
+	if (!stopped) {
 		stopped = 1;
 		pthread_mutex_unlock(&mutex_stopped);
 		return 0;
@@ -244,9 +252,10 @@ int jakopter_stop_video()
 {
 	video_set_stopped();
 	int exit_status = video_join_thread();
-	if(exit_status == 1)
+	
+	if (exit_status == 1)
 		fprintf(stderr, "Video thread is already shut down.\n");
-	else if(exit_status < 0)
+	else if (exit_status < 0)
 		return -1;
 	
 	return 0;
@@ -263,8 +272,8 @@ int video_join_thread()
 	pthread_mutex_lock(&mutex_terminated);
 	//remember the current state of the thread to return it at the end.
 	int prev_state = terminated;
-	if(!terminated) {
-		if(pthread_join(video_thread, NULL) < 0) {
+	if (!terminated) {
+		if (pthread_join(video_thread, NULL) < 0) {
 			perror("Error joining with the video thread");
 			pthread_mutex_unlock(&mutex_terminated);
 			return -1;
